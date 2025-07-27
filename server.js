@@ -11,7 +11,9 @@ const path = require('path'); // Import path module
 const adminRoutes = require('./routes/adminRoutes');
 
 // Middleware
-app.use(cors()); // Enable CORS for all origins (for development)
+app.use(cors({
+    origin: 'https://gigslk-production-de73.up.railway.app'
+})); // Enable CORS for all origins (for development)
 app.use(express.json()); // To parse JSON request bodies
 
 // Serve static files from the 'uploads' directory
