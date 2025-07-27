@@ -11,15 +11,15 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// Test the connection
-// pool.getConnection()
-//     .then(connection => {
-//         console.log('Successfully connected to the database!');
-//         connection.release();
-//     })
-//     .catch(err => {
-//         console.error('Error connecting to the database:', err.message);
-//         process.exit(1);
-//     });
+//Test the connection
+pool.getConnection()
+    .then(connection => {
+        console.log('Successfully connected to the database!');
+        connection.release();
+    })
+    .catch(err => {
+        console.error('Error connecting to the database:', err.message);
+        process.exit(1);
+    });1
 
 module.exports = pool; 
