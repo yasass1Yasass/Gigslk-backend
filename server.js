@@ -14,7 +14,9 @@ const adminRoutes = require('./routes/adminRoutes');
 // Enable CORS for your frontend with credentials
 app.use(cors({
     origin: 'https://gigslk-production-de73.up.railway.app',
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json()); // To parse JSON request bodies
 
