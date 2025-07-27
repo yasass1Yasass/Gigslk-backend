@@ -17,6 +17,10 @@ app.use(express.json()); // To parse JSON request bodies
 // Serve static files from the 'uploads' directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+app.get('/hello', (req, res) => {
+    res.send('hello');
+});
+
 
 app.use('/api/auth', authRoutes);
 app.use('/api/performers', performerRoutes);
@@ -27,7 +31,7 @@ app.get('/', (req, res) => {
 });
 
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // Start the server
 app.listen(PORT, () => {
