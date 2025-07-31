@@ -18,7 +18,7 @@ const upload = multer({
     }
 }).fields([ // Use .fields() to handle multiple file inputs with different names
     { name: 'profile_picture', maxCount: 1 },
-    { name: 'new_gallery_images', maxCount: 10 } // **Corrected to match frontend**
+    { name: 'gallery_images', maxCount: 10 } // **Corrected to match frontend**
 ]);
 
 // Check file type
