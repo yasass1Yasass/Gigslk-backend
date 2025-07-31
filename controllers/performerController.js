@@ -5,6 +5,36 @@ const upload = require('../config/multerConfig');
 // Define the base URL for constructing absolute image URLs
 const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
 
+// Helper function to convert relative path to absolute URL
+const toAbsoluteUrl = (relativePath) => {
+    if (!relativePath) return null;
+    // Ensure the relativePath starts with a single slash and is not already an absolute URL
+    const cleanedPath = relativePath.replace(/^\/+/, '');
+    return `${BASE_URL}/${cleanedPath}`;
+};
+
+// Helper function to convert absolute URL to relative path for DB storage
+const toRelativePath = (absoluteUrl) => {
+    if (!absoluteUrl) return null;
+    // If it's a temp blob URL, it should not be saved
+    if (absoluteUrl.startsWith('blob:')) return null;
+
+    // Check if it's already a relative path (starts with /uploads/)
+    if (absoluteUrl.startsWith('/uploads/')) {
+        return absoluteUrl;
+    }
+
+    // If it starts with BASE_URL, remove it
+    if (absoluteUrl.startsWith(BASE_URL)) {
+        return absoluteUrl.replace(BASE_URL, '').replace(/^\/+/, '/'); // Ensure it starts with a single /
+    }
+
+    // If it's neither, it might be a placeholder or invalid, handle as needed
+    // For now, if it's not starting with BASE_URL or /uploads/, assume it's invalid for DB storage
+    return null;
+};
+
+
 // Function to get a performer's profile (for a specific logged-in user)
 exports.getPerformerProfile = async (req, res) => {
     const userId = req.user.id; // User ID from authenticated token
@@ -52,7 +82,7 @@ exports.getPerformerProfile = async (req, res) => {
         performerProfile.skills = performerProfile.skills ? JSON.parse(performerProfile.skills) : [];
         performerProfile.gallery_images = performerProfile.gallery_images ? JSON.parse(performerProfile.gallery_images) : [];
 
-        // Map database fields to frontend PerformerProfile interface names
+        // Map database fields to frontend PerformerProfile interface names and construct absolute URLs
         const formattedProfile = {
             id: performerProfile.id,
             user_id: performerProfile.user_id,
@@ -63,9 +93,7 @@ exports.getPerformerProfile = async (req, res) => {
             bio: performerProfile.bio,
             price: performerProfile.price_display, // Map price_display to price
             skills: performerProfile.skills,
-            profile_picture_url: performerProfile.profile_picture_url
-                ? `${BASE_URL}/${performerProfile.profile_picture_url.replace(/^\/+/, '')}` // Ensure single leading slash
-                : null,
+            profile_picture_url: toAbsoluteUrl(performerProfile.profile_picture_url),
             contact_number: performerProfile.contact_number,
             direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
             travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -73,9 +101,7 @@ exports.getPerformerProfile = async (req, res) => {
             availability_weekends: performerProfile.preferred_availability_weekends === 1,
             availability_morning: performerProfile.preferred_availability_mornings === 1,
             availability_evening: performerProfile.preferred_availability_evenings === 1,
-            gallery_images: performerProfile.gallery_images
-                ? performerProfile.gallery_images.map(url => `${BASE_URL}/${url.replace(/^\/+/, '')}`) // Ensure single leading slash
-                : [],
+            gallery_images: performerProfile.gallery_images.map(url => toAbsoluteUrl(url)).filter(Boolean), // Filter out any nulls
             rating: performerProfile.average_rating,
             review_count: performerProfile.total_reviews,
         };
@@ -107,7 +133,7 @@ exports.updatePerformerProfile = async (req, res) => {
             bio,
             price,
             skills,
-            profile_picture_url, // This is the string from req.body
+            profile_picture_url, // This is the string from req.body (could be existing absolute URL or empty)
             contact_number,
             direct_booking,
             travel_distance,
@@ -115,7 +141,7 @@ exports.updatePerformerProfile = async (req, res) => {
             availability_weekends,
             availability_morning,
             availability_evening,
-            gallery_images: galleryImagesFromBody,
+            gallery_images: galleryImagesFromBody, // JSON string of existing absolute URLs
         } = req.body;
 
         // Get file paths from req.files (newly uploaded files)
@@ -127,43 +153,55 @@ exports.updatePerformerProfile = async (req, res) => {
             connection = await db.getConnection(); // Get a connection from the pool
             await connection.beginTransaction(); // Start a transaction
 
-            // --- 1. Determine the final profile picture URL ---
+            // --- 1. Determine the final profile picture URL for DB storage (relative path) ---
             let finalProfilePictureUrl = null;
             if (profilePictureFile) {
                 // A new file was uploaded, store its relative path
                 finalProfilePictureUrl = `/uploads/${profilePictureFile.filename}`;
             } else if (profile_picture_url) {
-                // An existing URL was sent. Strip the BASE_URL if it's there before storing.
-                finalProfilePictureUrl = profile_picture_url.startsWith(BASE_URL)
-                    ? `/${profile_picture_url.replace(BASE_URL, '').replace(/^\/+/, '')}`
-                    : `/${profile_picture_url.replace(/^\/+/, '')}`;
+                // An existing URL was sent from the frontend. Convert it to a relative path.
+                // This handles cases where the frontend sends an absolute URL or an empty string.
+                finalProfilePictureUrl = toRelativePath(profile_picture_url);
             }
-            // Handle the case where the user clears the profile picture
+            // If profile_picture_url was explicitly sent as an empty string, it means user cleared it.
             if (profile_picture_url === '') {
                 finalProfilePictureUrl = null;
             }
 
-            // --- 2. Determine the final gallery images URLs ---
-            const parsedExistingGalleryUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
-            // For existing URLs, strip the BASE_URL and ensure proper formatting
-            const existingRelativeUrls = parsedExistingGalleryUrls.map(url =>
-                url.startsWith(BASE_URL) ? `/${url.replace(BASE_URL, '').replace(/^\/+/, '')}` : `/${url.replace(/^\/+/, '')}`
-            );
+
+            // --- 2. Determine the final gallery images URLs for DB storage (array of relative paths) ---
+            let existingRelativeGalleryUrls = [];
+            if (galleryImagesFromBody) {
+                try {
+                    const parsedExistingGalleryUrls = JSON.parse(galleryImagesFromBody);
+                    // Convert existing absolute URLs from frontend to relative paths for DB
+                    existingRelativeGalleryUrls = parsedExistingGalleryUrls
+                        .map(url => toRelativePath(url))
+                        .filter(Boolean); // Filter out any nulls from invalid conversions
+                } catch (parseError) {
+                    console.warn('Could not parse gallery_images from body:', parseError);
+                    // If parsing fails, treat it as no existing images from body
+                    existingRelativeGalleryUrls = [];
+                }
+            }
+
             // For newly uploaded files, get their relative paths
             const newlyUploadedGalleryUrls = galleryImageFiles.map(file => `/uploads/${file.filename}`);
+
             // Combine the arrays of relative paths
-            const finalGalleryImageUrls = [...existingRelativeUrls, ...newlyUploadedGalleryUrls];
+            const finalGalleryImageUrls = [...existingRelativeGalleryUrls, ...newlyUploadedGalleryUrls];
             // Stringify the final array of relative URLs for database storage
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
 
             // Parse skills and other fields
             const skillsJson = JSON.stringify(skills ? JSON.parse(skills) : []);
-            const directBookingTinyInt = direct_booking ? 1 : 0;
+            const directBookingTinyInt = direct_booking === 'true' || direct_booking === true ? 1 : 0; // Handle boolean from form-data
             const travelDistanceInt = parseInt(travel_distance, 10) || 0;
-            const availabilityWeekdaysTinyInt = availability_weekdays ? 1 : 0;
-            const availabilityWeekendsTinyInt = availability_weekends ? 1 : 0;
-            const availabilityMorningTinyInt = availability_morning ? 1 : 0;
-            const availabilityEveningTinyInt = availability_evening ? 1 : 0;
+            const availabilityWeekdaysTinyInt = availability_weekdays === 'true' || availability_weekdays === true ? 1 : 0;
+            const availabilityWeekendsTinyInt = availability_weekends === 'true' || availability_weekends === true ? 1 : 0;
+            const availabilityMorningTinyInt = availability_morning === 'true' || availability_morning === true ? 1 : 0;
+            const availabilityEveningTinyInt = availability_evening === 'true' || availability_evening === true ? 1 : 0;
+
 
             // Check if a performer profile already exists for this user_id
             const [existingProfileCheck] = await connection.query('SELECT id FROM performers WHERE user_id = ?', [userId]);
@@ -269,7 +307,7 @@ exports.updatePerformerProfile = async (req, res) => {
     });
 };
 
-// Function to get all performer profiles for public browsing
+// Function to get all performer profiles for public Browse
 exports.getAllPerformerProfiles = async (req, res) => {
     try {
         const [performerRows] = await db.query('SELECT * FROM performers');
@@ -278,7 +316,7 @@ exports.getAllPerformerProfiles = async (req, res) => {
             performerProfile.skills = performerProfile.skills ? JSON.parse(performerProfile.skills) : [];
             performerProfile.gallery_images = performerProfile.gallery_images ? JSON.parse(performerProfile.gallery_images) : [];
 
-            // Map database fields to frontend PerformerProfile interface names
+            // Map database fields to frontend PerformerProfile interface names and construct absolute URLs
             return {
                 id: performerProfile.id,
                 user_id: performerProfile.user_id,
@@ -289,9 +327,7 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 bio: performerProfile.bio,
                 price: performerProfile.price_display, // Map price_display to price
                 skills: performerProfile.skills,
-                profile_picture_url: performerProfile.profile_picture_url
-                    ? `${BASE_URL}/${performerProfile.profile_picture_url.replace(/^\/+/, '')}` // Ensure single leading slash
-                    : null,
+                profile_picture_url: toAbsoluteUrl(performerProfile.profile_picture_url),
                 contact_number: performerProfile.contact_number,
                 direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
                 travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -299,9 +335,7 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 availability_weekends: performerProfile.preferred_availability_weekends === 1,
                 availability_morning: performerProfile.preferred_availability_mornings === 1,
                 availability_evening: performerProfile.preferred_availability_evenings === 1,
-                gallery_images: performerProfile.gallery_images
-                    ? performerProfile.gallery_images.map(url => `${BASE_URL}/${url.replace(/^\/+/, '')}`) // Ensure single leading slash
-                    : [],
+                gallery_images: performerProfile.gallery_images.map(url => toAbsoluteUrl(url)).filter(Boolean),
                 rating: performerProfile.average_rating,
                 review_count: performerProfile.total_reviews,
             };
