@@ -1,5 +1,6 @@
 const db = require('../config/db');
-const upload = require('../config/multerConfig'); // Correctly imported multer config
+const jwt = require('jsonwebtoken');
+const upload = require('../config/multerConfig'); // Import multer configuration
 
 // Function to get a host's profile for a specific logged-in user
 exports.getHostProfile = async (req, res) => {
@@ -22,7 +23,7 @@ exports.getHostProfile = async (req, res) => {
                 message: 'Host profile not found, returning default.',
                 profile: {
                     user_id: userId,
-                    company_organization: user.username,
+                    company_organization: user.username, // Default from user's username
                     contact_person: '',
                     contact_number: '',
                     location: 'Not Set',
@@ -37,7 +38,7 @@ exports.getHostProfile = async (req, res) => {
                     sms_notifications_enabled: false,
                     profile_picture_url: 'https://placehold.co/150x150/553c9a/ffffff?text=Host',
                     gallery_images: [],
-                    events_hosted: 0,
+                    events_hosted: 0, // Default display value
                     average_rating: 0,
                     total_reviews: 0,
                 }
@@ -62,18 +63,18 @@ exports.getHostProfile = async (req, res) => {
             location: hostProfile.location,
             event_types_typically_hosted: hostProfile.event_types_typically_hosted,
             bio: hostProfile.bio,
-            default_budget_range_min: parseFloat(hostProfile.default_budget_range_min),
+            default_budget_range_min: parseFloat(hostProfile.default_budget_range_min), // Convert DECIMAL to number
             default_budget_range_max: parseFloat(hostProfile.default_budget_range_max),
             preferred_performer_types: hostProfile.preferred_performer_types,
             preferred_locations_for_gigs: hostProfile.preferred_locations_for_gigs,
-            urgent_booking_enabled: hostProfile.urgent_booking_enabled === 1,
-            email_notifications_enabled: hostProfile.email_notifications_enabled === 1,
-            sms_notifications_enabled: hostProfile.sms_notifications_enabled === 1,
+            urgent_booking_enabled: hostProfile.urgent_booking_enabled === 1, // Convert TINYINT to boolean
+            email_notifications_enabled: hostProfile.email_notifications_enabled === 1, // Convert TINYINT to boolean
+            sms_notifications_enabled: hostProfile.sms_notifications_enabled === 1, // Convert TINYINT to boolean
             profile_picture_url: hostProfile.profile_picture_url,
             gallery_images: hostProfile.gallery_images,
-            events_hosted: hostProfile.events_hosted,
-            average_rating: hostProfile.average_rating,
-            total_reviews: hostProfile.total_reviews,
+            events_hosted: hostProfile.events_hosted, // Assuming these are in DB or calculated
+            average_rating: hostProfile.average_rating, // Assuming these are in DB or calculated
+            total_reviews: hostProfile.total_reviews, // Assuming these are in DB or calculated
         };
 
         res.status(200).json({ message: 'Host profile fetched successfully.', profile: formattedProfile });
@@ -92,28 +93,28 @@ exports.updateHostProfile = async (req, res) => {
             return res.status(400).json({ message: err.message || 'File upload failed.' });
         }
 
-        // De-structure body and files
+        const userId = req.user.id; // User ID from authenticated token
         const {
             company_organization,
             contact_person,
             contact_number,
             location,
-            event_types_typically_hosted,
+            event_types_typically_hosted, // JSON string from frontend
             bio,
             default_budget_range_min,
             default_budget_range_max,
-            preferred_performer_types,
+            preferred_performer_types, // JSON string from frontend
             preferred_locations_for_gigs,
-            urgent_booking_enabled,
+            urgent_booking_enabled, // '0' or '1' string from frontend
             email_notifications_enabled,
-            sms_notifications_enabled,
+            sms_notifications_enabled, // '0' or '1' string from frontend
             profile_picture_url,
-            existing_gallery_images, // This is the JSON string of old URLs
+            existing_gallery_images,// Existing profile picture URL from frontend// Existing gallery images from frontend (JSON string)
         } = req.body;
 
         // Get file paths from req.files (newly uploaded files)
         const profilePictureFile = req.files && req.files['profile_picture'] ? req.files['profile_picture'][0] : null;
-        const newGalleryImageFiles = req.files?.new_gallery_images || [];
+        const newGalleryImageFiles = req.files && req.files['new_gallery_images'] ? req.files['new_gallery_images'] : [];
 
         // Construct URLs for newly uploaded files
         const newProfilePictureUrl = profilePictureFile ? `/uploads/${profilePictureFile.filename}` : null;
@@ -131,7 +132,7 @@ exports.updateHostProfile = async (req, res) => {
             } else if (profile_picture_url !== undefined && profile_picture_url !== null) {
                 if (profile_picture_url === '') {
                     finalProfilePictureUrl = null;
-                } else {
+                }  else {
                     finalProfilePictureUrl = profile_picture_url.startsWith('https://gigslk-backend-production.up.railway.app/uploads/')
                         ? profile_picture_url.replace('https://gigslk-backend-production.up.railway.app', '')
                         : profile_picture_url;
@@ -165,26 +166,45 @@ exports.updateHostProfile = async (req, res) => {
                 // Update existing profile
                 await connection.query(
                     `UPDATE hosts SET
-                                      company_organization = ?, contact_person = ?, contact_number = ?, location = ?,
-                                      event_types_typically_hosted = ?, bio = ?, default_budget_range_min = ?,
-                                      default_budget_range_max = ?, preferred_performer_types = ?,
-                                      preferred_locations_for_gigs = ?, urgent_booking_enabled = ?,
-                                      email_notifications_enabled = ?, sms_notifications_enabled = ?,
-                                      profile_picture_url = ?, gallery_images = ?
+                                      company_organization = ?,
+                                      contact_person = ?,
+                                      contact_number = ?,
+                                      location = ?,
+                                      event_types_typically_hosted = ?,
+                                      bio = ?,
+                                      default_budget_range_min = ?,
+                                      default_budget_range_max = ?,
+                                      preferred_performer_types = ?,
+                                      preferred_locations_for_gigs = ?,
+                                      urgent_booking_enabled = ?,
+                                      email_notifications_enabled = ?,
+                                      sms_notifications_enabled = ?,
+                                      profile_picture_url = ?,
+                                      gallery_images = ?
                      WHERE user_id = ?`,
                     [
-                        company_organization, contact_person, contact_number, location,
-                        JSON.stringify(parsedEventTypes), bio, parseFloat(default_budget_range_min),
-                        parseFloat(default_budget_range_max), JSON.stringify(parsedPreferredPerformerTypes),
-                        JSON.stringify(parsedPreferredLocations), urgentBookingEnabledInt,
-                        emailNotificationsEnabledInt, smsNotificationsEnabledInt,
-                        finalProfilePictureUrl, galleryImagesJson, userId
+                        company_organization,
+                        contact_person,
+                        contact_number,
+                        location,
+                        JSON.stringify(parsedEventTypes), // Store as JSON string
+                        bio,
+                        parseFloat(default_budget_range_min), // Ensure decimal is stored correctly
+                        parseFloat(default_budget_range_max),
+                        JSON.stringify(parsedPreferredPerformerTypes), // Store as JSON string
+                        JSON.stringify(parsedPreferredLocations),
+                        urgentBookingEnabledInt, // Store as 0 or 1
+                        emailNotificationsEnabledInt,
+                        smsNotificationsEnabledInt,
+                        finalProfilePictureUrl,
+                        galleryImagesJson,
+                        userId
                     ]
                 );
                 await connection.commit();
                 res.status(200).json({ message: 'Host profile updated successfully.' });
             } else {
-                // Insert new profile
+                // Insert new profile (should ideally happen during registration)
                 await connection.query(
                     `INSERT INTO hosts (
                         user_id, company_organization, contact_person, contact_number, location,
@@ -194,13 +214,25 @@ exports.updateHostProfile = async (req, res) => {
                         gallery_images, events_hosted, average_rating, total_reviews
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
-                        userId, company_organization, contact_person, contact_number, location,
-                        JSON.stringify(parsedEventTypes), bio, parseFloat(default_budget_range_min),
-                        parseFloat(default_budget_range_max), JSON.stringify(parsedPreferredPerformerTypes),
-                        JSON.stringify(parsedPreferredLocations), urgentBookingEnabledInt,
-                        emailNotificationsEnabledInt, smsNotificationsEnabledInt,
-                        finalProfilePictureUrl, galleryImagesJson,
-                        0, 0, 0
+                        userId,
+                        company_organization,
+                        contact_person,
+                        contact_number,
+                        location,
+                        JSON.stringify(parsedEventTypes),
+                        bio,
+                        parseFloat(default_budget_range_min),
+                        parseFloat(default_budget_range_max),
+                        JSON.stringify(parsedPreferredPerformerTypes),
+                        JSON.stringify(parsedPreferredLocations),
+                        urgentBookingEnabledInt,
+                        emailNotificationsEnabledInt,
+                        smsNotificationsEnabledInt,
+                        finalProfilePictureUrl,
+                        galleryImagesJson,
+                        0, // Default events_hosted
+                        0,
+                        0,
                     ]
                 );
                 await connection.commit();
