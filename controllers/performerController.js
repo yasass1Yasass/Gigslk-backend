@@ -8,7 +8,6 @@ const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
 // Function to get a performer's profile (for a specific logged-in user)
 exports.getPerformerProfile = async (req, res) => {
     const userId = req.user.id; // User ID from authenticated token
-
     try {
         // Fetch user details from the users table
         const [userRows] = await db.query('SELECT username, email, role FROM users WHERE id = ?', [userId]);
@@ -19,7 +18,6 @@ exports.getPerformerProfile = async (req, res) => {
 
         // Fetch performer profile details from the performers table
         const [performerRows] = await db.query('SELECT * FROM performers WHERE user_id = ?', [userId]);
-
         if (performerRows.length === 0) {
             // If no performer profile exists, return a default/empty profile
             return res.status(200).json({
@@ -44,7 +42,7 @@ exports.getPerformerProfile = async (req, res) => {
                     gallery_images: [],
                     rating: 0,
                     review_count: 0,
-                }
+                },
             });
         }
 
@@ -65,8 +63,9 @@ exports.getPerformerProfile = async (req, res) => {
             bio: performerProfile.bio,
             price: performerProfile.price_display, // Map price_display to price
             skills: performerProfile.skills,
-            // Construct a full URL from the relative path stored in the database
-            profile_picture_url: performerProfile.profile_picture_url ? `${BASE_URL}${performerProfile.profile_picture_url}` : null,
+            profile_picture_url: performerProfile.profile_picture_url
+                ? `${BASE_URL}/${performerProfile.profile_picture_url.replace(/^\/+/, '')}` // Ensure single leading slash
+                : null,
             contact_number: performerProfile.contact_number,
             direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
             travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -74,14 +73,17 @@ exports.getPerformerProfile = async (req, res) => {
             availability_weekends: performerProfile.preferred_availability_weekends === 1,
             availability_morning: performerProfile.preferred_availability_mornings === 1,
             availability_evening: performerProfile.preferred_availability_evenings === 1,
-            // Construct full URLs for each image in the gallery
-            gallery_images: performerProfile.gallery_images ? performerProfile.gallery_images.map(url => `${BASE_URL}${url}`) : [],
+            gallery_images: performerProfile.gallery_images
+                ? performerProfile.gallery_images.map(url => `${BASE_URL}/${url.replace(/^\/+/, '')}`) // Ensure single leading slash
+                : [],
             rating: performerProfile.average_rating,
             review_count: performerProfile.total_reviews,
         };
 
-        res.status(200).json({ message: 'Performer profile fetched successfully.', profile: formattedProfile });
-
+        res.status(200).json({
+            message: 'Performer profile fetched successfully.',
+            profile: formattedProfile,
+        });
     } catch (error) {
         console.error('Error fetching performer profile:', error);
         res.status(500).json({ message: 'Internal server error.' });
@@ -90,7 +92,6 @@ exports.getPerformerProfile = async (req, res) => {
 
 // Function to update a performer's profile
 exports.updatePerformerProfile = async (req, res) => {
-
     upload(req, res, async (err) => {
         if (err) {
             console.error('Multer upload error:', err);
@@ -134,8 +135,8 @@ exports.updatePerformerProfile = async (req, res) => {
             } else if (profile_picture_url) {
                 // An existing URL was sent. Strip the BASE_URL if it's there before storing.
                 finalProfilePictureUrl = profile_picture_url.startsWith(BASE_URL)
-                    ? profile_picture_url.replace(BASE_URL, '')
-                    : profile_picture_url;
+                    ? `/${profile_picture_url.replace(BASE_URL, '').replace(/^\/+/, '')}`
+                    : `/${profile_picture_url.replace(/^\/+/, '')}`;
             }
             // Handle the case where the user clears the profile picture
             if (profile_picture_url === '') {
@@ -144,24 +145,21 @@ exports.updatePerformerProfile = async (req, res) => {
 
             // --- 2. Determine the final gallery images URLs ---
             const parsedExistingGalleryUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
-            // For existing URLs, strip the BASE_URL before combining
+            // For existing URLs, strip the BASE_URL and ensure proper formatting
             const existingRelativeUrls = parsedExistingGalleryUrls.map(url =>
-                url.startsWith(BASE_URL) ? url.replace(BASE_URL, '') : url
+                url.startsWith(BASE_URL) ? `/${url.replace(BASE_URL, '').replace(/^\/+/, '')}` : `/${url.replace(/^\/+/, '')}`
             );
             // For newly uploaded files, get their relative paths
             const newlyUploadedGalleryUrls = galleryImageFiles.map(file => `/uploads/${file.filename}`);
-
             // Combine the arrays of relative paths
             const finalGalleryImageUrls = [...existingRelativeUrls, ...newlyUploadedGalleryUrls];
-
             // Stringify the final array of relative URLs for database storage
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
-
 
             // Parse skills and other fields
             const skillsJson = JSON.stringify(skills ? JSON.parse(skills) : []);
             const directBookingTinyInt = direct_booking ? 1 : 0;
-            const travelDistanceInt = parseInt(travel_distance, 10);
+            const travelDistanceInt = parseInt(travel_distance, 10) || 0;
             const availabilityWeekdaysTinyInt = availability_weekdays ? 1 : 0;
             const availabilityWeekendsTinyInt = availability_weekends ? 1 : 0;
             const availabilityMorningTinyInt = availability_morning ? 1 : 0;
@@ -169,7 +167,6 @@ exports.updatePerformerProfile = async (req, res) => {
 
             // Check if a performer profile already exists for this user_id
             const [existingProfileCheck] = await connection.query('SELECT id FROM performers WHERE user_id = ?', [userId]);
-
             if (existingProfileCheck.length > 0) {
                 // Update existing profile
                 await connection.query(
@@ -207,19 +204,33 @@ exports.updatePerformerProfile = async (req, res) => {
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson, // Use the JSON string of relative URLs
-                        userId
+                        galleryImagesJson,
+                        userId,
                     ]
                 );
                 await connection.commit();
                 res.status(200).json({ message: 'Performer profile updated successfully.' });
             } else {
+                // Create new profile
                 await connection.query(
                     `INSERT INTO performers (
-                        user_id, full_name, stage_name, location, performance_type, bio, price_display, skills,
-                        profile_picture_url, contact_number, accept_direct_booking, travel_distance_km,
-                        preferred_availability_weekdays, preferred_availability_weekends,
-                        preferred_availability_mornings, preferred_availability_evenings, gallery_images
+                        user_id,
+                        full_name,
+                        stage_name,
+                        location,
+                        performance_type,
+                        bio,
+                        price_display,
+                        skills,
+                        profile_picture_url,
+                        contact_number,
+                        accept_direct_booking,
+                        travel_distance_km,
+                        preferred_availability_weekdays,
+                        preferred_availability_weekends,
+                        preferred_availability_mornings,
+                        preferred_availability_evenings,
+                        gallery_images
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         userId,
@@ -238,13 +249,12 @@ exports.updatePerformerProfile = async (req, res) => {
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson, // Use the JSON string of relative URLs
+                        galleryImagesJson,
                     ]
                 );
                 await connection.commit();
                 res.status(201).json({ message: 'Performer profile created successfully.' });
             }
-
         } catch (error) {
             if (connection) {
                 await connection.rollback(); // Rollback on error
@@ -263,7 +273,6 @@ exports.updatePerformerProfile = async (req, res) => {
 exports.getAllPerformerProfiles = async (req, res) => {
     try {
         const [performerRows] = await db.query('SELECT * FROM performers');
-
         const allProfiles = performerRows.map(performerProfile => {
             // Parse JSON fields
             performerProfile.skills = performerProfile.skills ? JSON.parse(performerProfile.skills) : [];
@@ -280,7 +289,9 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 bio: performerProfile.bio,
                 price: performerProfile.price_display, // Map price_display to price
                 skills: performerProfile.skills,
-                profile_picture_url: performerProfile.profile_picture_url ? `${BASE_URL}${performerProfile.profile_picture_url}` : null,
+                profile_picture_url: performerProfile.profile_picture_url
+                    ? `${BASE_URL}/${performerProfile.profile_picture_url.replace(/^\/+/, '')}` // Ensure single leading slash
+                    : null,
                 contact_number: performerProfile.contact_number,
                 direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
                 travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -288,14 +299,18 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 availability_weekends: performerProfile.preferred_availability_weekends === 1,
                 availability_morning: performerProfile.preferred_availability_mornings === 1,
                 availability_evening: performerProfile.preferred_availability_evenings === 1,
-                gallery_images: performerProfile.gallery_images ? performerProfile.gallery_images.map(url => `${BASE_URL}${url}`) : [],
+                gallery_images: performerProfile.gallery_images
+                    ? performerProfile.gallery_images.map(url => `${BASE_URL}/${url.replace(/^\/+/, '')}`) // Ensure single leading slash
+                    : [],
                 rating: performerProfile.average_rating,
                 review_count: performerProfile.total_reviews,
             };
         });
 
-        res.status(200).json({ message: 'All performer profiles fetched successfully.', profiles: allProfiles });
-
+        res.status(200).json({
+            message: 'All performer profiles fetched successfully.',
+            profiles: allProfiles,
+        });
     } catch (error) {
         console.error('Error fetching all performer profiles:', error);
         res.status(500).json({ message: 'Internal server error.' });
