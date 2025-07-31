@@ -90,6 +90,8 @@ exports.updateHostProfile = async (req, res) => {
     // Define the base URL for constructing absolute image URLs
     const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
 
+    console.log(req.body)
+
     upload(req, res, async (err) => {
         if (err) {
             console.error('Multer upload error:', err);
