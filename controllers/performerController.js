@@ -1,6 +1,7 @@
-const db = require('../config/db'); 
-const jwt = require('jsonwebtoken'); 
-const upload = require('../config/multerConfig'); 
+const db = require('../config/db');
+const jwt = require('jsonwebtoken');
+const upload = require('../config/multerConfig');
+
 // Function to get a performer's profile (for a specific logged-in user)
 exports.getPerformerProfile = async (req, res) => {
     const userId = req.user.id; // User ID from authenticated token
@@ -28,7 +29,7 @@ exports.getPerformerProfile = async (req, res) => {
                     performance_type: 'Not Set',
                     bio: 'Tell us about your talent and experience!',
                     price: 'Rs. 0 - Rs. 0',
-                    skills: [], 
+                    skills: [],
                     profile_picture_url: 'https://placehold.co/150x150/553c9a/ffffff?text=Profile',
                     contact_number: 'Not Set',
                     direct_booking: false,
@@ -37,7 +38,7 @@ exports.getPerformerProfile = async (req, res) => {
                     availability_weekends: false,
                     availability_morning: false,
                     availability_evening: false,
-                    gallery_images: [], 
+                    gallery_images: [],
                     rating: 0,
                     review_count: 0,
                 }
@@ -84,15 +85,14 @@ exports.getPerformerProfile = async (req, res) => {
 
 // Function to update a performer's profile
 exports.updatePerformerProfile = async (req, res) => {
-    
+
+    const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
+
     upload(req, res, async (err) => {
         if (err) {
             console.error('Multer upload error:', err);
             return res.status(400).json({ message: err.message || 'File upload failed.' });
         }
-
-        console.log('Backend: req.body received:', req.body);
-        console.log('Backend: req.files received:', req.files);
 
         const userId = req.user.id; // User ID from authenticated token
         const {
@@ -114,76 +114,47 @@ exports.updatePerformerProfile = async (req, res) => {
             gallery_images: galleryImagesFromBody,
         } = req.body;
 
-        console.log('Backend: Destructured profile_picture_url (from req.body):', profile_picture_url);
-        console.log('Backend: Destructured galleryImagesFromBody (from req.body):', galleryImagesFromBody);
-
         // Get file paths from req.files (newly uploaded files)
         const profilePictureFile = req.files && req.files['profile_picture'] ? req.files['profile_picture'][0] : null;
         const galleryImageFiles = req.files && req.files['gallery_images'] ? req.files['gallery_images'] : [];
-
-        console.log('Backend: profilePictureFile (from req.files):', profilePictureFile);
-        console.log('Backend: galleryImageFiles (from req.files):', galleryImageFiles);
-
-
-        // Construct URLs for newly uploaded files
-        const newProfilePictureUrl = profilePictureFile ? `/uploads/${profilePictureFile.filename}` : null;
-        const newGalleryImageUrls = galleryImageFiles.map(file => `/uploads/${file.filename}`);
-
-        console.log('Backend: newProfilePictureUrl:', newProfilePictureUrl);
-        console.log('Backend: newGalleryImageUrls:', newGalleryImageUrls);
 
         let connection;
         try {
             connection = await db.getConnection(); // Get a connection from the pool
             await connection.beginTransaction(); // Start a transaction
 
-            // Determine final profile picture URL
-            let finalProfilePictureUrl = null; 
-            if (newProfilePictureUrl) {
-                // Case 1: New profile picture uploaded, use its relative path
-                finalProfilePictureUrl = newProfilePictureUrl;
-            } else if (profile_picture_url !== undefined && profile_picture_url !== null) {
-                
-                // If frontend sent an empty string, it means user removed it or it was initially empty
-                if (profile_picture_url === '') {
-                    finalProfilePictureUrl = null; 
-                } else {
-                    // It's an existing URL, strip backend base URL if present to store relative path
-                    finalProfilePictureUrl = profile_picture_url.startsWith('http://localhost:5000/uploads/')
-                        ? profile_picture_url.replace('http://localhost:5000', '')
-                        : profile_picture_url;
-                }
+            // --- 1. Determine the final profile picture URL ---
+            let finalProfilePictureUrl = null;
+            if (profilePictureFile) {
+                // A new file was uploaded, construct a full URL
+                finalProfilePictureUrl = `${BASE_URL}/uploads/${profilePictureFile.filename}`;
+            } else if (profile_picture_url) {
+                // An existing URL was sent from the frontend
+                finalProfilePictureUrl = profile_picture_url;
             }
-            console.log('Backend: Determined finalProfilePictureUrl:', finalProfilePictureUrl);
+            // If neither is present, finalProfilePictureUrl remains null.
 
-            // Determine final gallery images URLs
-            
-            let finalGalleryImageUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
-            // Ensure these are relative paths if they came as absolute from frontend
-            finalGalleryImageUrls = finalGalleryImageUrls.map(url =>
-                url.startsWith('http://localhost:5000/uploads/')
-                    ? url.replace('http://localhost:5000', '')
-                    : url
+
+            // --- 2. Determine the final gallery images URLs ---
+            // Parse existing gallery images from the frontend (which should be full URLs)
+            const parsedExistingGalleryUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
+
+            // Construct full URLs for newly uploaded gallery images
+            const newlyUploadedGalleryUrls = galleryImageFiles.map(file =>
+                `${BASE_URL}/uploads/${file.filename}`
             );
-            // Add any newly uploaded gallery image URLs
-            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newGalleryImageUrls];
-            console.log('Backend: Determined finalGalleryImageUrls:', finalGalleryImageUrls);
 
-            // Ensure skills are parsed from JSON string if they come as such, or are an array
-            let parsedSkills = [];
-            try {
-                parsedSkills = skills ? JSON.parse(skills) : [];
-            } catch (parseError) {
-                // If skills is already an array or not valid JSON, treat as empty or directly use
-                parsedSkills = Array.isArray(skills) ? skills : [];
-            }
+            // Combine existing and new full URLs
+            const finalGalleryImageUrls = [...parsedExistingGalleryUrls, ...newlyUploadedGalleryUrls];
 
-
-            const skillsJson = JSON.stringify(parsedSkills);
+            // Stringify the final array of full URLs for database storage
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
 
+
+            // Parse skills and other fields
+            const skillsJson = JSON.stringify(skills ? JSON.parse(skills) : []);
             const directBookingTinyInt = direct_booking ? 1 : 0;
-            const travelDistanceInt = parseInt(travel_distance, 10); // Ensure travel_distance is an integer
+            const travelDistanceInt = parseInt(travel_distance, 10);
             const availabilityWeekdaysTinyInt = availability_weekdays ? 1 : 0;
             const availabilityWeekendsTinyInt = availability_weekends ? 1 : 0;
             const availabilityMorningTinyInt = availability_morning ? 1 : 0;
@@ -219,17 +190,17 @@ exports.updatePerformerProfile = async (req, res) => {
                         location,
                         performance_type,
                         bio,
-                        price, // Use price for price_display
+                        price,
                         skillsJson,
-                        finalProfilePictureUrl, // Use the determined final URL
+                        finalProfilePictureUrl,
                         contact_number,
                         directBookingTinyInt,
-                        travelDistanceInt, // Use the parsed integer
+                        travelDistanceInt,
                         availabilityWeekdaysTinyInt,
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson, // Use the determined final URLs
+                        galleryImagesJson, // Use the JSON string of full URLs
                         userId
                     ]
                 );
@@ -250,17 +221,17 @@ exports.updatePerformerProfile = async (req, res) => {
                         location,
                         performance_type,
                         bio,
-                        price, // Use price for price_display
+                        price,
                         skillsJson,
-                        finalProfilePictureUrl, // Use the determined final URL
+                        finalProfilePictureUrl,
                         contact_number,
                         directBookingTinyInt,
-                        travelDistanceInt, // Use the parsed integer
+                        travelDistanceInt,
                         availabilityWeekdaysTinyInt,
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson // Use the determined final URLs
+                        galleryImagesJson, // Use the JSON string of full URLs
                     ]
                 );
                 await connection.commit();
