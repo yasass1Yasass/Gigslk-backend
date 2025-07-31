@@ -87,6 +87,9 @@ exports.getHostProfile = async (req, res) => {
 
 // Function to update a host's profile
 exports.updateHostProfile = async (req, res) => {
+    // Define the base URL for constructing absolute image URLs
+    const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
+
     upload(req, res, async (err) => {
         if (err) {
             console.error('Multer upload error:', err);
@@ -99,55 +102,56 @@ exports.updateHostProfile = async (req, res) => {
             contact_person,
             contact_number,
             location,
-            event_types_typically_hosted, // JSON string from frontend
+            event_types_typically_hosted,
             bio,
             default_budget_range_min,
             default_budget_range_max,
-            preferred_performer_types, // JSON string from frontend
+            preferred_performer_types,
             preferred_locations_for_gigs,
-            urgent_booking_enabled, // '0' or '1' string from frontend
+            urgent_booking_enabled,
             email_notifications_enabled,
-            sms_notifications_enabled, // '0' or '1' string from frontend
+            sms_notifications_enabled,
             profile_picture_url,
-            existing_gallery_images,// Existing profile picture URL from frontend// Existing gallery images from frontend (JSON string)
+            existing_gallery_images, // This is a JSON string of relative paths
         } = req.body;
 
         // Get file paths from req.files (newly uploaded files)
         const profilePictureFile = req.files && req.files['profile_picture'] ? req.files['profile_picture'][0] : null;
         const newGalleryImageFiles = req.files && req.files['new_gallery_images'] ? req.files['new_gallery_images'] : [];
 
-        // Construct URLs for newly uploaded files
-        const newProfilePictureUrl = profilePictureFile ? `/uploads/${profilePictureFile.filename}` : null;
-        const newlyUploadedGalleryImageUrls = newGalleryImageFiles.map(file => `/uploads/${file.filename}`);
-
         let connection;
         try {
             connection = await db.getConnection();
             await connection.beginTransaction();
 
-            // Determine final profile picture URL
+            // --- 1. Determine the final profile picture URL ---
             let finalProfilePictureUrl = null;
-            if (newProfilePictureUrl) {
-                finalProfilePictureUrl = newProfilePictureUrl;
-            } else if (profile_picture_url !== undefined && profile_picture_url !== null) {
-                if (profile_picture_url === '') {
-                    finalProfilePictureUrl = null;
-                }  else {
-                    finalProfilePictureUrl = profile_picture_url.startsWith('https://gigslk-backend-production.up.railway.app/uploads/')
-                        ? profile_picture_url.replace('https://gigslk-backend-production.up.railway.app', '')
-                        : profile_picture_url;
-                }
+            if (profilePictureFile) {
+                // A new file was uploaded, construct a full URL
+                finalProfilePictureUrl = `${BASE_URL}/uploads/${profilePictureFile.filename}`;
+            } else if (profile_picture_url) {
+                // An existing URL was sent from the frontend
+                // The frontend should send the full URL for the existing image.
+                finalProfilePictureUrl = profile_picture_url;
             }
+            // If neither is present, finalProfilePictureUrl remains null.
 
-            // Determine final gallery images URLs
-            let finalGalleryImageUrls = existing_gallery_images ? JSON.parse(existing_gallery_images) : [];
-            finalGalleryImageUrls = finalGalleryImageUrls.map(url =>
-                url.startsWith('https://gigslk-backend-production.up.railway.app/uploads/')
-                    ? url.replace('https://gigslk-backend-production.up.railway.app', '')
-                    : url
+
+            // --- 2. Determine the final gallery images URLs ---
+            // Parse existing gallery images from the frontend (which are full URLs)
+            const parsedExistingGalleryUrls = existing_gallery_images ? JSON.parse(existing_gallery_images) : [];
+
+            // Construct full URLs for newly uploaded gallery images
+            const newlyUploadedGalleryUrls = newGalleryImageFiles.map(file =>
+                `${BASE_URL}/uploads/${file.filename}`
             );
-            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newlyUploadedGalleryImageUrls];
+
+            // Combine existing and new full URLs
+            const finalGalleryImageUrls = [...parsedExistingGalleryUrls, ...newlyUploadedGalleryUrls];
+
+            // Stringify the final array of full URLs for database storage
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
+
 
             // Parse JSON strings for array fields from frontend
             const parsedEventTypes = event_types_typically_hosted ? JSON.parse(event_types_typically_hosted) : [];
@@ -187,24 +191,24 @@ exports.updateHostProfile = async (req, res) => {
                         contact_person,
                         contact_number,
                         location,
-                        JSON.stringify(parsedEventTypes), // Store as JSON string
+                        JSON.stringify(parsedEventTypes),
                         bio,
-                        parseFloat(default_budget_range_min), // Ensure decimal is stored correctly
+                        parseFloat(default_budget_range_min),
                         parseFloat(default_budget_range_max),
-                        JSON.stringify(parsedPreferredPerformerTypes), // Store as JSON string
+                        JSON.stringify(parsedPreferredPerformerTypes),
                         JSON.stringify(parsedPreferredLocations),
-                        urgentBookingEnabledInt, // Store as 0 or 1
+                        urgentBookingEnabledInt,
                         emailNotificationsEnabledInt,
                         smsNotificationsEnabledInt,
                         finalProfilePictureUrl,
-                        galleryImagesJson,
+                        galleryImagesJson, // Store the JSON string of full URLs
                         userId
                     ]
                 );
                 await connection.commit();
                 res.status(200).json({ message: 'Host profile updated successfully.' });
             } else {
-                // Insert new profile (should ideally happen during registration)
+                // Insert new profile
                 await connection.query(
                     `INSERT INTO hosts (
                         user_id, company_organization, contact_person, contact_number, location,
@@ -229,8 +233,8 @@ exports.updateHostProfile = async (req, res) => {
                         emailNotificationsEnabledInt,
                         smsNotificationsEnabledInt,
                         finalProfilePictureUrl,
-                        galleryImagesJson,
-                        0, // Default events_hosted
+                        galleryImagesJson, // Store the JSON string of full URLs
+                        0,
                         0,
                         0,
                     ]
