@@ -108,17 +108,17 @@ exports.updateHostProfile = async (req, res) => {
             urgent_booking_enabled, // '0' or '1' string from frontend
             email_notifications_enabled, 
             sms_notifications_enabled, // '0' or '1' string from frontend
-            profile_picture_url, // Existing profile picture URL from frontend
-            gallery_images: galleryImagesFromBody, // Existing gallery images from frontend (JSON string)
+            profile_picture_url,
+            existing_gallery_images,// Existing profile picture URL from frontend// Existing gallery images from frontend (JSON string)
         } = req.body;
 
         // Get file paths from req.files (newly uploaded files)
         const profilePictureFile = req.files && req.files['profile_picture'] ? req.files['profile_picture'][0] : null;
-        const galleryImageFiles = req.files && req.files['gallery_images'] ? req.files['gallery_images'] : [];
+        const newGalleryImageFiles = req.files && req.files['new_gallery_images'] ? req.files['new_gallery_images'] : [];
 
         // Construct URLs for newly uploaded files
         const newProfilePictureUrl = profilePictureFile ? `/uploads/${profilePictureFile.filename}` : null;
-        const newGalleryImageUrls = galleryImageFiles.map(file => `/uploads/${file.filename}`);
+        const newlyUploadedGalleryImageUrls = newGalleryImageFiles.map(file => `/uploads/${file.filename}`);
 
         let connection;
         try {
@@ -132,21 +132,21 @@ exports.updateHostProfile = async (req, res) => {
             } else if (profile_picture_url !== undefined && profile_picture_url !== null) {
                 if (profile_picture_url === '') {
                     finalProfilePictureUrl = null;
-                } else {
-                    finalProfilePictureUrl = profile_picture_url.startsWith('http://localhost:5000/uploads/')
-                        ? profile_picture_url.replace('http://localhost:5000', '')
+                }  else {
+                    finalProfilePictureUrl = profile_picture_url.startsWith('https://gigslk-backend-production.up.railway.app/uploads/')
+                        ? profile_picture_url.replace('https://gigslk-backend-production.up.railway.app', '')
                         : profile_picture_url;
                 }
             }
 
             // Determine final gallery images URLs
-            let finalGalleryImageUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
+            let finalGalleryImageUrls = existing_gallery_images ? JSON.parse(existing_gallery_images) : [];
             finalGalleryImageUrls = finalGalleryImageUrls.map(url =>
-                url.startsWith('http://localhost:5000/uploads/')
-                    ? url.replace('http://localhost:5000', '')
+                url.startsWith('https://gigslk-backend-production.up.railway.app/uploads/')
+                    ? url.replace('https://gigslk-backend-production.up.railway.app', '')
                     : url
             );
-            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newGalleryImageUrls];
+            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newlyUploadedGalleryImageUrls];
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
 
             // Parse JSON strings for array fields from frontend
