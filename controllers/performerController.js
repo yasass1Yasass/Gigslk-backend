@@ -2,6 +2,9 @@ const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const upload = require('../config/multerConfig');
 
+// Define the base URL for constructing absolute image URLs
+const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
+
 // Function to get a performer's profile (for a specific logged-in user)
 exports.getPerformerProfile = async (req, res) => {
     const userId = req.user.id; // User ID from authenticated token
@@ -62,7 +65,8 @@ exports.getPerformerProfile = async (req, res) => {
             bio: performerProfile.bio,
             price: performerProfile.price_display, // Map price_display to price
             skills: performerProfile.skills,
-            profile_picture_url: performerProfile.profile_picture_url,
+            // Construct a full URL from the relative path stored in the database
+            profile_picture_url: performerProfile.profile_picture_url ? `${BASE_URL}${performerProfile.profile_picture_url}` : null,
             contact_number: performerProfile.contact_number,
             direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
             travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -70,7 +74,8 @@ exports.getPerformerProfile = async (req, res) => {
             availability_weekends: performerProfile.preferred_availability_weekends === 1,
             availability_morning: performerProfile.preferred_availability_mornings === 1,
             availability_evening: performerProfile.preferred_availability_evenings === 1,
-            gallery_images: performerProfile.gallery_images,
+            // Construct full URLs for each image in the gallery
+            gallery_images: performerProfile.gallery_images ? performerProfile.gallery_images.map(url => `${BASE_URL}${url}`) : [],
             rating: performerProfile.average_rating,
             review_count: performerProfile.total_reviews,
         };
@@ -85,8 +90,6 @@ exports.getPerformerProfile = async (req, res) => {
 
 // Function to update a performer's profile
 exports.updatePerformerProfile = async (req, res) => {
-
-    const BASE_URL = 'https://gigslk-backend-production.up.railway.app';
 
     upload(req, res, async (err) => {
         if (err) {
@@ -126,28 +129,32 @@ exports.updatePerformerProfile = async (req, res) => {
             // --- 1. Determine the final profile picture URL ---
             let finalProfilePictureUrl = null;
             if (profilePictureFile) {
-                // A new file was uploaded, construct a full URL
-                finalProfilePictureUrl = `${BASE_URL}/uploads/${profilePictureFile.filename}`;
+                // A new file was uploaded, store its relative path
+                finalProfilePictureUrl = `/uploads/${profilePictureFile.filename}`;
             } else if (profile_picture_url) {
-                // An existing URL was sent from the frontend
-                finalProfilePictureUrl = profile_picture_url;
+                // An existing URL was sent. Strip the BASE_URL if it's there before storing.
+                finalProfilePictureUrl = profile_picture_url.startsWith(BASE_URL)
+                    ? profile_picture_url.replace(BASE_URL, '')
+                    : profile_picture_url;
             }
-            // If neither is present, finalProfilePictureUrl remains null.
-
+            // Handle the case where the user clears the profile picture
+            if (profile_picture_url === '') {
+                finalProfilePictureUrl = null;
+            }
 
             // --- 2. Determine the final gallery images URLs ---
-            // Parse existing gallery images from the frontend (which should be full URLs)
             const parsedExistingGalleryUrls = galleryImagesFromBody ? JSON.parse(galleryImagesFromBody) : [];
-
-            // Construct full URLs for newly uploaded gallery images
-            const newlyUploadedGalleryUrls = galleryImageFiles.map(file =>
-                `${BASE_URL}/uploads/${file.filename}`
+            // For existing URLs, strip the BASE_URL before combining
+            const existingRelativeUrls = parsedExistingGalleryUrls.map(url =>
+                url.startsWith(BASE_URL) ? url.replace(BASE_URL, '') : url
             );
+            // For newly uploaded files, get their relative paths
+            const newlyUploadedGalleryUrls = galleryImageFiles.map(file => `/uploads/${file.filename}`);
 
-            // Combine existing and new full URLs
-            const finalGalleryImageUrls = [...parsedExistingGalleryUrls, ...newlyUploadedGalleryUrls];
+            // Combine the arrays of relative paths
+            const finalGalleryImageUrls = [...existingRelativeUrls, ...newlyUploadedGalleryUrls];
 
-            // Stringify the final array of full URLs for database storage
+            // Stringify the final array of relative URLs for database storage
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
 
 
@@ -167,23 +174,23 @@ exports.updatePerformerProfile = async (req, res) => {
                 // Update existing profile
                 await connection.query(
                     `UPDATE performers SET
-                    full_name = ?,
-                    stage_name = ?,
-                    location = ?,
-                    performance_type = ?,
-                    bio = ?,
-                    price_display = ?,
-                    skills = ?,
-                    profile_picture_url = ?,
-                    contact_number = ?,
-                    accept_direct_booking = ?,
-                    travel_distance_km = ?,
-                    preferred_availability_weekdays = ?,
-                    preferred_availability_weekends = ?,
-                    preferred_availability_mornings = ?,
-                    preferred_availability_evenings = ?,
-                    gallery_images = ?
-                    WHERE user_id = ?`,
+                                           full_name = ?,
+                                           stage_name = ?,
+                                           location = ?,
+                                           performance_type = ?,
+                                           bio = ?,
+                                           price_display = ?,
+                                           skills = ?,
+                                           profile_picture_url = ?,
+                                           contact_number = ?,
+                                           accept_direct_booking = ?,
+                                           travel_distance_km = ?,
+                                           preferred_availability_weekdays = ?,
+                                           preferred_availability_weekends = ?,
+                                           preferred_availability_mornings = ?,
+                                           preferred_availability_evenings = ?,
+                                           gallery_images = ?
+                     WHERE user_id = ?`,
                     [
                         full_name,
                         stage_name,
@@ -200,7 +207,7 @@ exports.updatePerformerProfile = async (req, res) => {
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson, // Use the JSON string of full URLs
+                        galleryImagesJson, // Use the JSON string of relative URLs
                         userId
                     ]
                 );
@@ -231,7 +238,7 @@ exports.updatePerformerProfile = async (req, res) => {
                         availabilityWeekendsTinyInt,
                         availabilityMorningTinyInt,
                         availabilityEveningTinyInt,
-                        galleryImagesJson, // Use the JSON string of full URLs
+                        galleryImagesJson, // Use the JSON string of relative URLs
                     ]
                 );
                 await connection.commit();
@@ -273,7 +280,7 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 bio: performerProfile.bio,
                 price: performerProfile.price_display, // Map price_display to price
                 skills: performerProfile.skills,
-                profile_picture_url: performerProfile.profile_picture_url,
+                profile_picture_url: performerProfile.profile_picture_url ? `${BASE_URL}${performerProfile.profile_picture_url}` : null,
                 contact_number: performerProfile.contact_number,
                 direct_booking: performerProfile.accept_direct_booking === 1, // Convert TINYINT to boolean
                 travel_distance: performerProfile.travel_distance_km, // Map travel_distance_km
@@ -281,7 +288,7 @@ exports.getAllPerformerProfiles = async (req, res) => {
                 availability_weekends: performerProfile.preferred_availability_weekends === 1,
                 availability_morning: performerProfile.preferred_availability_mornings === 1,
                 availability_evening: performerProfile.preferred_availability_evenings === 1,
-                gallery_images: performerProfile.gallery_images,
+                gallery_images: performerProfile.gallery_images ? performerProfile.gallery_images.map(url => `${BASE_URL}${url}`) : [],
                 rating: performerProfile.average_rating,
                 review_count: performerProfile.total_reviews,
             };
