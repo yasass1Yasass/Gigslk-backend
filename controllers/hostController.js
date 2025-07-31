@@ -93,32 +93,35 @@ exports.updateHostProfile = async (req, res) => {
             return res.status(400).json({ message: err.message || 'File upload failed.' });
         }
 
-        const userId = req.user.id; // User ID from authenticated token
+        // --- NEW LOGS FOR DEBUGGING ---
+        console.log('--- Debugging req.files content ---');
+        console.log('req.files:', req.files);
+        if (req.files && req.files['new_gallery_images']) {
+            console.log('req.files[\'new_gallery_images\'] exists and is:', req.files['new_gallery_images']);
+            console.log('Is req.files[\'new_gallery_images\'] an array?', Array.isArray(req.files['new_gallery_images']));
+            console.log('Length of req.files[\'new_gallery_images\']:', req.files['new_gallery_images'].length);
+        }
+        console.log('--- End Debugging req.files content ---');
+
+        const userId = req.user.id;
         const {
-            company_organization,
-            contact_person,
-            contact_number,
-            location,
-            event_types_typically_hosted, // JSON string from frontend
-            bio,
-            default_budget_range_min,
-            default_budget_range_max,
-            preferred_performer_types, // JSON string from frontend
-            preferred_locations_for_gigs, 
-            urgent_booking_enabled, // '0' or '1' string from frontend
-            email_notifications_enabled, 
-            sms_notifications_enabled, // '0' or '1' string from frontend
+            // ... other fields ...
             profile_picture_url,
-            existing_gallery_images,// Existing profile picture URL from frontend// Existing gallery images from frontend (JSON string)
+            existing_gallery_images,
         } = req.body;
 
-        // Get file paths from req.files (newly uploaded files)
         const profilePictureFile = req.files && req.files['profile_picture'] ? req.files['profile_picture'][0] : null;
-        const newGalleryImageFiles = req.files && req.files['new_gallery_images'] ? req.files['new_gallery_images'] : [];
+
+        // **SIMPLIFIED/DIRECT ASSIGNMENT FOR GALLERY IMAGES**
+        // This is the key change. Directly assign, and let the .map handle the empty array if it is.
+        const newGalleryImageFiles = req.files?.new_gallery_images || []; // Use optional chaining for robustness
 
         // Construct URLs for newly uploaded files
         const newProfilePictureUrl = profilePictureFile ? `/uploads/${profilePictureFile.filename}` : null;
         const newlyUploadedGalleryImageUrls = newGalleryImageFiles.map(file => `/uploads/${file.filename}`);
+
+        console.log('newlyUploadedGalleryImageUrls (after map):', newlyUploadedGalleryImageUrls);
+
 
         let connection;
         try {
@@ -146,7 +149,7 @@ exports.updateHostProfile = async (req, res) => {
                     ? url.replace('https://gigslk-backend-production.up.railway.app', '')
                     : url
             );
-            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newlyUploadedGalleryImageUrls];
+            finalGalleryImageUrls = [...finalGalleryImageUrls, ...newlyUploadedGalleryImageUrls]; // This is where the combined array happens
             const galleryImagesJson = JSON.stringify(finalGalleryImageUrls);
 
             // Parse JSON strings for array fields from frontend
@@ -166,35 +169,35 @@ exports.updateHostProfile = async (req, res) => {
                 // Update existing profile
                 await connection.query(
                     `UPDATE hosts SET
-                    company_organization = ?,
-                    contact_person = ?,
-                    contact_number = ?,
-                    location = ?,
-                    event_types_typically_hosted = ?,
-                    bio = ?,
-                    default_budget_range_min = ?,
-                    default_budget_range_max = ?,
-                    preferred_performer_types = ?,
-                    preferred_locations_for_gigs = ?,
-                    urgent_booking_enabled = ?,
-                    email_notifications_enabled = ?,
-                    sms_notifications_enabled = ?,
-                    profile_picture_url = ?,
-                    gallery_images = ?
-                    WHERE user_id = ?`,
+                                      company_organization = ?,
+                                      contact_person = ?,
+                                      contact_number = ?,
+                                      location = ?,
+                                      event_types_typically_hosted = ?,
+                                      bio = ?,
+                                      default_budget_range_min = ?,
+                                      default_budget_range_max = ?,
+                                      preferred_performer_types = ?,
+                                      preferred_locations_for_gigs = ?,
+                                      urgent_booking_enabled = ?,
+                                      email_notifications_enabled = ?,
+                                      sms_notifications_enabled = ?,
+                                      profile_picture_url = ?,
+                                      gallery_images = ?
+                     WHERE user_id = ?`,
                     [
                         company_organization,
                         contact_person,
                         contact_number,
                         location,
-                        JSON.stringify(parsedEventTypes), // Store as JSON string
+                        JSON.stringify(parsedEventTypes),
                         bio,
-                        parseFloat(default_budget_range_min), // Ensure decimal is stored correctly
-                        parseFloat(default_budget_range_max), 
-                        JSON.stringify(parsedPreferredPerformerTypes), // Store as JSON string
-                        JSON.stringify(parsedPreferredLocations), 
-                        urgentBookingEnabledInt, // Store as 0 or 1
-                        emailNotificationsEnabledInt, 
+                        parseFloat(default_budget_range_min),
+                        parseFloat(default_budget_range_max),
+                        JSON.stringify(parsedPreferredPerformerTypes),
+                        JSON.stringify(parsedPreferredLocations),
+                        urgentBookingEnabledInt,
+                        emailNotificationsEnabledInt,
                         smsNotificationsEnabledInt,
                         finalProfilePictureUrl,
                         galleryImagesJson,
@@ -204,7 +207,7 @@ exports.updateHostProfile = async (req, res) => {
                 await connection.commit();
                 res.status(200).json({ message: 'Host profile updated successfully.' });
             } else {
-                // Insert new profile (should ideally happen during registration)
+                // Insert new profile
                 await connection.query(
                     `INSERT INTO hosts (
                         user_id, company_organization, contact_person, contact_number, location,
@@ -231,8 +234,8 @@ exports.updateHostProfile = async (req, res) => {
                         finalProfilePictureUrl,
                         galleryImagesJson,
                         0, // Default events_hosted
-                        0, 
-                        0, 
+                        0,
+                        0,
                     ]
                 );
                 await connection.commit();
